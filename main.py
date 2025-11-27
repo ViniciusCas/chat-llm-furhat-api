@@ -9,7 +9,7 @@ from furhat_realtime_api import AsyncFurhatClient, Events
 
 from head_movements import HeadMotionController
 from gestures import GestureController
-
+from engagement import *
 
 class Chatbot:
     def __init__(self, system_prompt: str):
@@ -190,6 +190,10 @@ class OpenAIAsyncFurhatBridge:
         if not self.shutting_down:
             self.chatbot.commit_robot(event["text"])
 
+    async def on_users_data(self, event):
+        if not self.shutting_down:
+            print("AAAAAAAAAA")
+
     # Main dialog loop
     async def run(self):
         self.setup_signal_handlers()
@@ -216,6 +220,7 @@ class OpenAIAsyncFurhatBridge:
         self.furhat.add_handler(Events.response_hear_end, self.on_hear_end)
         self.furhat.add_handler(Events.response_speak_start, self.on_speak_start)
         self.furhat.add_handler(Events.response_speak_end, self.on_speak_end)
+        self.furhat.add_handler(Events.response_users_data, self.on_users_data)
 
         await self.furhat.request_attend_user()
 
