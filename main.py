@@ -1,9 +1,10 @@
 import asyncio
-from openai import AsyncOpenAI
-# from google import genai
+
+# from openai import AsyncOpenAI
+from google import genai
+from google.genai import types
+
 import contextlib
-import json
-import os
 import argparse
 import signal
 from dotenv import load_dotenv
@@ -18,8 +19,9 @@ class Chatbot:
         self.system_prompt = system_prompt
         self.dialog_history = []
         self.current_user_utt = None
-        self.openai_task = None
+        self.gemini_task = None
         self.shutting_down = False
+        self.client = genai.Client()
 
     def commit_user(self):
         if self.current_user_utt is None:
@@ -34,31 +36,62 @@ class Chatbot:
         if self.shutting_down:
             return
         self.current_user_utt = text
-        self.openai_task = asyncio.create_task(self.make_request(callback))
+        self.gemini_task = asyncio.create_task(self.make_request(callback))
 
     def cancel_request(self):
         self.current_user_utt = None
-        if self.openai_task and not self.openai_task.done():
+        if self.gemini_task and not self.gemini_task.done():
             print("[OpenAI] Cancelling request...")
-            self.openai_task.cancel()
+            self.gemini_task.cancel()
 
     async def make_request(self, callback):
         try:
-            messages = (
-                [{"role": "developer", "content": self.system_prompt}]
-                + self.dialog_history
-                + [{"role": "user", "content": self.current_user_utt}]
+            contents: list[types.Content] = []
+
+            for msg in self.dialog_history:
+                role = msg["role"]
+                text = msg["content"]
+                if role == "user":
+                    contents.append(
+                        types.Content(
+                            role="user",
+                            parts=[types.Part(text=text)],
+                        )
+                    )
+                elif role == "assistant":
+                    contents.append(
+                        types.Content(
+                            role="model",
+                            parts=[types.Part(text=text)],
+                        )
+                    )
+
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[types.Part(text=self.current_user_utt)],
+                )
             )
-            print("[OpenAI] request:", messages)
-            response = await self.client.chat.completions.create(
-                model="gpt-4o-mini", messages=messages
+
+            print("[Gemini] request (contents built from history + user):")
+            print(contents)
+
+            # Call Gemini async models API
+            response = await self.client.aio.models.generate_content(
+                model="gemini-2.5-flash-lite",
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=self.system_prompt,
+                ),
             )
-            robot_text = response.choices[0].message.content
-            print("[OpenAI] response:", robot_text)
+
+            robot_text = response.text
+            print("[Gemini] response:", robot_text)
+
             if not self.shutting_down:
                 await callback(robot_text)
         except asyncio.CancelledError:
-            print("[OpenAI] request was aborted.")
+            print("[Gemini] request was aborted.")
             return None
 
     def set_client(self, client):
@@ -68,13 +101,9 @@ class Chatbot:
         self.shutting_down = value
 
 
-class OpenAIAsyncFurhatBridge:
+class LlmAsyncFurhatBridge:
     def __init__(self, host: str = "127.0.0.1", auth_key=None):
         load_dotenv(override=True)
-
-        self.client = AsyncOpenAI(
-            api_key=os.environ.get("OPENAI_API_KEY"),
-        )
 
         self.assistant_name = "Eduardo"
 
@@ -122,7 +151,6 @@ class OpenAIAsyncFurhatBridge:
         # Connect to the Furhat Realtime API
         self.furhat = AsyncFurhatClient(host, auth_key=auth_key)
         self.chatbot = Chatbot(self.system_prompt)
-        self.chatbot.set_client(self.client)
 
         self.head_controller = None
         self.head_task = None
@@ -195,24 +223,32 @@ class OpenAIAsyncFurhatBridge:
         if not self.shutting_down:
             self.chatbot.commit_robot(event["text"])
 
-    async def on_users_data(self, event):
+    async def on_users_data(self):
         if self.shutting_down:
             return
+        
+        event = await self.furhat.request_users_once()
+
+        print(event)
 
         self.prev_user_count = self.user_count
         self.user_count = len(event["users"])
-        
-        
+
+        print(self.user_count)
+
         if self.user_count > 0:
             await self.furhat.request_attend_user("closest")
+        elif self.user_count == 1 and self.prev_user_count == 0:
+            await self.furhat.request_speak_text(self.conversation_starter)
         elif self.user_count > self.prev_user_count:
             for user in event["users"]:
-                if (user not in self.users):
+                if user not in self.users:
                     await self.furhat.request_attend_user(user.id)
                     continue
         else:
+            await self.furhat.request_listen_stop()
             await self.gestures.asleep()
-        
+
         self.users = [user.id for user in event["users"]]
 
     # Main dialog loop
@@ -223,7 +259,7 @@ class OpenAIAsyncFurhatBridge:
 
         try:
             await self.furhat.connect()
-        except Exception as e:
+        except Exception:
             print(f"Failed to connect to Furhat on {self.host}.")
             exit(0)
 
@@ -239,11 +275,13 @@ class OpenAIAsyncFurhatBridge:
         self.furhat.add_handler(Events.response_hear_end, self.on_hear_end)
         self.furhat.add_handler(Events.response_speak_start, self.on_speak_start)
         self.furhat.add_handler(Events.response_speak_end, self.on_speak_end)
-        self.furhat.add_handler(Events.response_users_data, self.on_users_data)
+        # self.furhat.add_handler(Events.response_users_data, self.on_users_data)
 
-        await self.furhat.request_attend_user()
+        await self.on_users_data()
 
-        await self.furhat.request_speak_text(self.conversation_starter)
+        # await self.furhat.request_attend_user()
+
+        # await self.furhat.request_speak_text(self.conversation_starter)
 
         # Start listening
         await self.furhat.request_listen_start(
@@ -285,4 +323,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    asyncio.run(OpenAIAsyncFurhatBridge(args.host, auth_key=args.auth_key).run())
+    asyncio.run(LlmAsyncFurhatBridge(args.host, auth_key=args.auth_key).run())
