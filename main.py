@@ -105,11 +105,19 @@ class LlmAsyncFurhatBridge:
     def __init__(self, host: str = "127.0.0.1", auth_key=None):
         load_dotenv(override=True)
 
-        self.assistant_name = "Eduardo"
+        self.Male = False
+
+        if not self.Male:
+            self.assistant_name = "Vanessa"
+        else:
+            self.assistant_name = "Eduardo"
 
         self.system_prompt = f"""Você é um robô conversacional furhat-robot e tem o nome de {self.assistant_name} que conversa APENAS em português BR, o seu papel é conversar
         sobre qualquer assunto de forma interessante. Remember to always respect the following statements:
           - Always communicate in Brazilian Portuguese.
+          - Use very few words: usually 1–3 short sentences.
+          - Go straight to the point, no long context or introductions.
+          - Only give more details if the user explicitly asks (“explain more”, “details”, “step by step”, etc.).
           - Answer like you heard the question
             - Stay on topic and actually answer what was asked.
             - Use the user's own words where possible, remember that you are talking with brazilian people, so you should use their language.
@@ -142,7 +150,7 @@ class LlmAsyncFurhatBridge:
         """
 
         self.conversation_starter = (
-            f"Olá, sou {self.assistant_name}, como posso te ajudar?"
+            f"Olá, sou a {self.assistant_name}, como posso te ajudar?"
         )
         self.stop_event = asyncio.Event()
         self.shutting_down = False
@@ -160,8 +168,13 @@ class LlmAsyncFurhatBridge:
 
     async def setup_robot_configs(self):
         if not self.shutting_down:
-            await self.furhat.request_listen_config(["en-US", "pt-BR"])
-            await self.furhat.request_face_config("adult - James", True, True)
+            await self.furhat.request_listen_config(["pt-BR"])
+            if  not self.Male:
+                await self.furhat.request_face_config("child - Isabel", True, True)
+                await self.furhat.request_voice_config("Camila-Neural (pt-BR) - Amazon Polly")
+            else:
+                await self.furhat.request_face_config("adult - James", True, True)
+                await self.furhat.request_voice_config("Ricardo (pt-BR) - Amazon Polly")
 
     def setup_signal_handlers(self):
         """Setup signal handlers for graceful shutdown"""
@@ -251,30 +264,14 @@ class LlmAsyncFurhatBridge:
                 if user not in self.users:
                     await self.furhat.request_attend_user(user["id"])
                     continue
-
-            await self.furhat.request_listen_start(
-                concat=True,
-                stop_no_speech=False,
-                stop_user_end=False,
-                stop_robot_start=True,
-                resume_robot_end=True,
-                end_speech_timeout=0.5,
-            )
+                
         elif self.user_count == 0:
             self.head_controller.sleep(True)
 
-            await self.furhat.request_listen_stop()
             await self.gestures.sleep()
         else:
             await self.furhat.request_attend_user("closest")
-            await self.furhat.request_listen_start(
-                concat=True,
-                stop_no_speech=False,
-                stop_user_end=False,
-                stop_robot_start=True,
-                resume_robot_end=True,
-                end_speech_timeout=0.5,
-            )
+
 
         self.users = [user["id"] for user in event["users"]]
 
@@ -289,6 +286,8 @@ class LlmAsyncFurhatBridge:
         except Exception:
             print(f"Failed to connect to Furhat on {self.host}.")
             exit(0)
+
+        await self.setup_robot_configs()
 
         self.head_controller = HeadMotionController(self.furhat)
         self.head_task = asyncio.create_task(
@@ -305,6 +304,15 @@ class LlmAsyncFurhatBridge:
         self.furhat.add_handler(Events.response_users_data, self.on_users_data)
 
         await self.furhat.request_users_start()
+
+        await self.furhat.request_listen_start(
+            concat=True,
+            stop_no_speech=False,
+            stop_user_end=False,
+            stop_robot_start=True,
+            resume_robot_end=True,
+            end_speech_timeout=0.5,
+        )
 
         # Wait for shutdown signal instead of input
         await self.stop_event.wait()

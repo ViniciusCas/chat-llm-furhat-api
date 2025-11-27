@@ -21,13 +21,6 @@ class HeadMotionController:
     def sleep(self, value: bool):
         self._sleeping = value
 
-    async def enable_microexpressions(
-        self, visibility: bool = True, microexpressions: bool = True
-    ) -> None:
-        await self.furhat.request_face_config(
-            "adult - James", visibility, microexpressions
-        )
-
     async def random_glance_away(
         self,
         min_interval: float = 10.0,
@@ -37,7 +30,6 @@ class HeadMotionController:
     ) -> None:
         while not self._stop:
             if self._sleeping:
-                print("kjsdklakja")
                 await asyncio.sleep(0.5)
                 continue
             delay = random.uniform(min_interval, max_interval)
@@ -124,7 +116,6 @@ class HeadMotionController:
         await self.furhat.request_face_reset()
 
     async def run_concurrent_behaviours(self) -> None:
-        await self.enable_microexpressions(visibility=True, microexpressions=True)
         await asyncio.gather(
             self.random_glance_away(),
             self.nap_head_movement(),
