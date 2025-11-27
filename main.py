@@ -1,11 +1,15 @@
 import asyncio
 from openai import AsyncOpenAI
+import contextlib
 import json
 import os
 import argparse
 import signal
 from dotenv import load_dotenv
 from furhat_realtime_api import AsyncFurhatClient, Events
+
+from head_movements import HeadMotionController
+
 
 
 class Chatbot:
@@ -118,9 +122,13 @@ class OpenAIAsyncFurhatBridge:
         self.chatbot = Chatbot(self.system_prompt)
         self.chatbot.set_client(self.client)
 
+        self.head_controller = None
+        self.head_task = None
+
     async def setup_robot_configs(self):
         if not self.shutting_down:
             await self.furhat.request_listen_config(["en-US", "pt-BR"])
+            await self.furhat.request_face_config("adult - James", True, True)
 
     def setup_signal_handlers(self):
         """Setup signal handlers for graceful shutdown"""
@@ -191,13 +199,17 @@ class OpenAIAsyncFurhatBridge:
             print(f"Failed to connect to Furhat on {self.host}.")
             exit(0)
 
-        await self.setup_robot_configs()
+        self.head_controller = HeadMotionController(self.furhat)
+        self.head_task = asyncio.create_task(
+            self.head_controller.run_concurrent_behaviours()
+        )
 
         # Register event handlers
         self.furhat.add_handler(Events.response_hear_start, self.on_hear_start)
         self.furhat.add_handler(Events.response_hear_end, self.on_hear_end)
         self.furhat.add_handler(Events.response_speak_start, self.on_speak_start)
         self.furhat.add_handler(Events.response_speak_end, self.on_speak_end)
+
 
         await self.furhat.request_attend_user()
 
@@ -218,6 +230,16 @@ class OpenAIAsyncFurhatBridge:
 
         # Wait for shutdown signal instead of input
         await self.stop_event.wait()
+
+        print("Killing head task now...")
+
+        if self.head_task:
+            # if your HeadMotionController has .stop(), call it:
+            if hasattr(self.head_controller, "stop"):
+                self.head_controller.stop()
+            self.head_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self.head_task
 
         print("Shutting down...")
         await self.furhat.disconnect()
