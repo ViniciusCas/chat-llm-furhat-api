@@ -150,9 +150,8 @@ class LlmAsyncFurhatBridge:
 
         # Connect to the Furhat Realtime API
         self.furhat = AsyncFurhatClient(host, auth_key=auth_key)
-        self.chatbot = Chatbot(self.system_prompt)
 
-        self.head_controller = None
+        self.chatbot = Chatbot(self.system_prompt)
         self.head_task = None
 
         self.user_count = 0
@@ -223,33 +222,61 @@ class LlmAsyncFurhatBridge:
         if not self.shutting_down:
             self.chatbot.commit_robot(event["text"])
 
-    async def on_users_data(self):
+    async def on_users_data(self, event):
         if self.shutting_down:
             return
-        
-        event = await self.furhat.request_users_once()
-
-        print(event)
 
         self.prev_user_count = self.user_count
         self.user_count = len(event["users"])
 
-        print(self.user_count)
-
         if self.user_count > 0:
+            self.head_controller.sleep(False)
+            await self.gestures.wakeUp()
+
+        if self.user_count > 0 and self.prev_user_count == 0:
             await self.furhat.request_attend_user("closest")
-        elif self.user_count == 1 and self.prev_user_count == 0:
             await self.furhat.request_speak_text(self.conversation_starter)
+
+            await self.furhat.request_listen_start(
+                concat=True,
+                stop_no_speech=False,
+                stop_user_end=False,
+                stop_robot_start=True,
+                resume_robot_end=True,
+                end_speech_timeout=0.5,
+            )
+
         elif self.user_count > self.prev_user_count:
             for user in event["users"]:
                 if user not in self.users:
-                    await self.furhat.request_attend_user(user.id)
+                    await self.furhat.request_attend_user(user["id"])
                     continue
-        else:
-            await self.furhat.request_listen_stop()
-            await self.gestures.asleep()
 
-        self.users = [user.id for user in event["users"]]
+            await self.furhat.request_listen_start(
+                concat=True,
+                stop_no_speech=False,
+                stop_user_end=False,
+                stop_robot_start=True,
+                resume_robot_end=True,
+                end_speech_timeout=0.5,
+            )
+        elif self.user_count == 0:
+            self.head_controller.sleep(True)
+
+            await self.furhat.request_listen_stop()
+            await self.gestures.sleep()
+        else:
+            await self.furhat.request_attend_user("closest")
+            await self.furhat.request_listen_start(
+                concat=True,
+                stop_no_speech=False,
+                stop_user_end=False,
+                stop_robot_start=True,
+                resume_robot_end=True,
+                end_speech_timeout=0.5,
+            )
+
+        self.users = [user["id"] for user in event["users"]]
 
     # Main dialog loop
     async def run(self):
@@ -275,26 +302,9 @@ class LlmAsyncFurhatBridge:
         self.furhat.add_handler(Events.response_hear_end, self.on_hear_end)
         self.furhat.add_handler(Events.response_speak_start, self.on_speak_start)
         self.furhat.add_handler(Events.response_speak_end, self.on_speak_end)
-        # self.furhat.add_handler(Events.response_users_data, self.on_users_data)
+        self.furhat.add_handler(Events.response_users_data, self.on_users_data)
 
-        await self.on_users_data()
-
-        # await self.furhat.request_attend_user()
-
-        # await self.furhat.request_speak_text(self.conversation_starter)
-
-        # Start listening
-        await self.furhat.request_listen_start(
-            # Concatenate user speech into a single utterance
-            concat=True,
-            # Do not stop listening until the robot starts speaking
-            stop_no_speech=False,
-            stop_user_end=False,
-            stop_robot_start=True,
-            # Resume listening after the robot finishes speaking
-            resume_robot_end=True,
-            end_speech_timeout=0.5,
-        )
+        await self.furhat.request_users_start()
 
         # Wait for shutdown signal instead of input
         await self.stop_event.wait()

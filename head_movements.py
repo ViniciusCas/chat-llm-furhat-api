@@ -8,16 +8,18 @@ from furhat_realtime_api import AsyncFurhatClient
 
 class HeadMotionController:
     def __init__(self, furhat: AsyncFurhatClient) -> None:
-        if AsyncFurhatClient is None:
-            raise RuntimeError(
-                "furhat_realtime_api must be installed to use HeadMotionController"
-            )
+        if furhat is None:
+            raise RuntimeError()
         self.furhat = furhat
         self._stop = False
+        self._sleeping = False
 
     def stop(self) -> None:
         """Signal all running behaviours to terminate on their next iteration."""
         self._stop = True
+
+    def sleep(self, value: bool):
+        self._sleeping = value
 
     async def enable_microexpressions(
         self, visibility: bool = True, microexpressions: bool = True
@@ -34,6 +36,10 @@ class HeadMotionController:
         pitch_range: float = 5.0,
     ) -> None:
         while not self._stop:
+            if self._sleeping:
+                print("kjsdklakja")
+                await asyncio.sleep(0.5)
+                continue
             delay = random.uniform(min_interval, max_interval)
             await asyncio.sleep(delay)
             # Randomly choose direction and magnitude for yaw (left/right) and
@@ -59,6 +65,9 @@ class HeadMotionController:
         duration: float = 2.0,
     ) -> None:
         while not self._stop:
+            if self._sleeping:
+                await asyncio.sleep(0.5)
+                continue
             delay = random.uniform(min_interval, max_interval)
             await asyncio.sleep(delay)
             # Compute random offsets for roll and pitch.  Yaw is kept at zero
@@ -85,6 +94,9 @@ class HeadMotionController:
     ) -> None:
         gestures = ["Blink", "GazeAversion"]
         while not self._stop:
+            if self._sleeping:
+                await asyncio.sleep(0.5)
+                continue
             await asyncio.sleep(random.uniform(min_interval, max_interval))
             gesture_name = random.choice(gestures)
             await self.furhat.request_gesture_start(name=gesture_name)

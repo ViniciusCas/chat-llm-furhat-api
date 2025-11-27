@@ -39,15 +39,16 @@ class GestureController:
         )
 
         await asyncio.sleep(0.5)
-    
-    async def asleep(self):
-        await self.furhat.request_gesture_start(
-            name="Blink",
-            intensity=1.0,
-            duration=100000,
+
+    async def sleep(self):
+        await self.furhat.request_face_params(
+            {"EYE_BLINK_LEFT": 1, "EYE_BLINK_RIGHT": 1}
         )
-        
-        await asyncio.sleep(0.6)
+
+    async def wakeUp(self):
+        await self.furhat.request_face_params(
+            {"EYE_BLINK_LEFT": 0, "EYE_BLINK_RIGHT": 0}
+        )
 
     async def reset_head(self):
         await self.furhat.request_face_headpose(
