@@ -1,7 +1,6 @@
 import asyncio
 from openai import AsyncOpenAI
 import contextlib
-import json
 import os
 import argparse
 import signal
@@ -9,7 +8,7 @@ from dotenv import load_dotenv
 from furhat_realtime_api import AsyncFurhatClient, Events
 
 from head_movements import HeadMotionController
-
+from gestures import GestureController
 
 
 class Chatbot:
@@ -75,7 +74,6 @@ class OpenAIAsyncFurhatBridge:
             api_key=os.environ.get("OPENAI_API_KEY"),
         )
 
-        self.isMale = True
         self.assistant_name = "Eduardo"
 
         self.system_prompt = f"""Você é um robô conversacional furhat-robot e tem o nome de {self.assistant_name} que conversa APENAS em português BR, o seu papel é conversar
@@ -112,7 +110,9 @@ class OpenAIAsyncFurhatBridge:
             - Use “Eu” only for internal states like “Eu acho / Eu entendo / Eu cometi um erro”.
         """
 
-        self.conversation_starter = f"Olá, sou {'o' if self.isMale is True else 'a'} {self.assistant_name}, como posso te ajudar?"
+        self.conversation_starter = (
+            f"Olá, sou {self.assistant_name}, como posso te ajudar?"
+        )
         self.stop_event = asyncio.Event()
         self.shutting_down = False
         self.host = host
@@ -167,9 +167,12 @@ class OpenAIAsyncFurhatBridge:
         if not self.shutting_down:
             self.chatbot.cancel_request()
 
+            await self.gesture_controller.hear_speech()
+
     # The user has stopped speaking, initiate the LLM request
     async def on_hear_end(self, event):
         if not self.shutting_down:
+            await self.gesture_controller.listening()
             self.chatbot.initiate_request(event["text"], self.on_chatbot_response_ready)
 
     # The chatbot has a response, prepare to speak it out
@@ -204,12 +207,15 @@ class OpenAIAsyncFurhatBridge:
             self.head_controller.run_concurrent_behaviours()
         )
 
+        await self.setup_robot_configs()
+
+        self.gesture_controller = GestureController(self.furhat)
+
         # Register event handlers
         self.furhat.add_handler(Events.response_hear_start, self.on_hear_start)
         self.furhat.add_handler(Events.response_hear_end, self.on_hear_end)
         self.furhat.add_handler(Events.response_speak_start, self.on_speak_start)
         self.furhat.add_handler(Events.response_speak_end, self.on_speak_end)
-
 
         await self.furhat.request_attend_user()
 

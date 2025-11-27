@@ -1,7 +1,5 @@
 import asyncio
 import random
-import websockets
-import json
 from typing import Optional
 from furhat_realtime_api import AsyncFurhatClient
 
