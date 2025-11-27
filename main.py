@@ -1,6 +1,8 @@
 import asyncio
 from openai import AsyncOpenAI
+# from google import genai
 import contextlib
+import json
 import os
 import argparse
 import signal
@@ -9,7 +11,7 @@ from furhat_realtime_api import AsyncFurhatClient, Events
 
 from head_movements import HeadMotionController
 from gestures import GestureController
-from engagement import *
+
 
 class Chatbot:
     def __init__(self, system_prompt: str):
@@ -125,6 +127,10 @@ class OpenAIAsyncFurhatBridge:
         self.head_controller = None
         self.head_task = None
 
+        self.user_count = 0
+        self.prev_user_count = 0
+        self.users = []
+
     async def setup_robot_configs(self):
         if not self.shutting_down:
             await self.furhat.request_listen_config(["en-US", "pt-BR"])
@@ -166,13 +172,12 @@ class OpenAIAsyncFurhatBridge:
     async def on_hear_start(self, event):
         if not self.shutting_down:
             self.chatbot.cancel_request()
-
-            await self.gesture_controller.hear_speech()
+            await self.gestures.hear_speech()
 
     # The user has stopped speaking, initiate the LLM request
     async def on_hear_end(self, event):
         if not self.shutting_down:
-            await self.gesture_controller.listening()
+            await self.gestures.listening()
             self.chatbot.initiate_request(event["text"], self.on_chatbot_response_ready)
 
     # The chatbot has a response, prepare to speak it out
@@ -191,8 +196,24 @@ class OpenAIAsyncFurhatBridge:
             self.chatbot.commit_robot(event["text"])
 
     async def on_users_data(self, event):
-        if not self.shutting_down:
-            print("AAAAAAAAAA")
+        if self.shutting_down:
+            return
+
+        self.prev_user_count = self.user_count
+        self.user_count = len(event["users"])
+        
+        
+        if self.user_count > 0:
+            await self.furhat.request_attend_user("closest")
+        elif self.user_count > self.prev_user_count:
+            for user in event["users"]:
+                if (user not in self.users):
+                    await self.furhat.request_attend_user(user.id)
+                    continue
+        else:
+            await self.gestures.asleep()
+        
+        self.users = [user.id for user in event["users"]]
 
     # Main dialog loop
     async def run(self):
@@ -211,9 +232,7 @@ class OpenAIAsyncFurhatBridge:
             self.head_controller.run_concurrent_behaviours()
         )
 
-        await self.setup_robot_configs()
-
-        self.gesture_controller = GestureController(self.furhat)
+        self.gestures = GestureController(self.furhat)
 
         # Register event handlers
         self.furhat.add_handler(Events.response_hear_start, self.on_hear_start)
